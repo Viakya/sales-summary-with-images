@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CSV Viewer + Images</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 0; padding: 1rem; line-height: 1.4; }
+    header { margin-bottom: 1rem; }
+    h1 { font-size: 1.4rem; margin: 0 0 .25rem; }
+    .note { font-size: .95rem; opacity: .8; }
+    .warn { color: #b45309; background: #fff7ed; border: 1px solid #fed7aa; padding: .5rem .75rem; border-radius: .5rem; display: none; margin: .5rem 0; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: .75rem; align-items: start; }
+    figure { margin: 0; }
+    img { max-width: 100%; height: auto; display: block; border-radius: .5rem; border: 1px solid #e5e7eb; }
+    .card { border: 1px solid #e5e7eb; border-radius: .5rem; padding: .75rem; background: #fff; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { border: 1px solid #e5e7eb; padding: .5rem .6rem; text-align: left; }
+    th { background: #f8fafc; }
+    caption { text-align: left; font-weight: 600; margin-bottom: .5rem; }
+    .muted { opacity: .7; }
+    .error { color: #b91c1c; background: #fef2f2; border: 1px solid #fecaca; padding: .5rem .75rem; border-radius: .5rem; }
+    footer { margin-top: 1.25rem; font-size: .9rem; opacity: .8; }
+    @media (prefers-color-scheme: dark) {
+      .card, th { background: #111827; }
+      img, .card, th, td { border-color: #374151; }
+      .warn { background: #2b1900; border-color: #7a3e06; }
+      .error { background: #2a1111; border-color: #7f1d1d; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Data Viewer</h1>
+    <div class="note">This page loads data.csv, displays its contents, and shows two images from the same folder.</div>
+    <div id="fileWarning" class="warn">Tip: For the CSV to load reliably, open this folder with a local web server (see README). Opening index.html directly from disk may block file loading in some browsers.</div>
+  </header>
+
+  <main class="grid">
+    <section class="card">
+      <h2 style="margin-top:0">Images</h2>
+      <div class="grid">
+        <figure>
+          <img src="photo1.png" alt="Photo 1" />
+          <figcaption class="muted">photo1.png</figcaption>
+        </figure>
+        <figure>
+          <img src="photo2.png" alt="Photo 2" />
+          <figcaption class="muted">photo2.png</figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2 style="margin-top:0">CSV Data</h2>
+      <div id="csvStatus" class="muted">Loading data.csv…</div>
+      <div id="tableHost"></div>
+    </section>
+  </main>
+
+  <footer>
+    <span class="muted">Files expected alongside this page: data.csv, photo1.png, photo2.png</span>
+  </footer>
+
+  <script>
+    (function () {
+      // Show helpful warning when opened via file://
+      if (location.protocol === 'file:') {
+        document.getElementById('fileWarning').style.display = 'block';
+      }
+
+      loadCSV('data.csv');
+
+      async function loadCSV(path) {
+        const statusEl = document.getElementById('csvStatus');
+        try {
+          const res = await fetch(path, { cache: 'no-cache' });
+          if (!res.ok) throw new Error('HTTP ' + res.status + ' ' + res.statusText);
+          const text = await res.text();
+          const rows = parseCSV(text);
+          if (!rows.length) {
+            statusEl.outerHTML = '<div class="error">data.csv is empty.</div>';
+            return;
+          }
+          statusEl.remove();
+          renderTable(rows);
+        } catch (err) {
+          statusEl.outerHTML = '<div class="error">Failed to load data.csv: ' + escapeHTML(err.message) + '</div>';
+        }
+      }
+
+      // Minimal CSV parser for simple files (handles quoted fields and commas inside quotes)
+      function parseCSV(text) {
+        const lines = [];
+        let row = [];
+        let field = '';
+        let inQuotes = false;
+
+        for (let i = 0; i < text.length; i++) {
+          const c = text[i];
+          const next = text[i + 1];
+
+          if (inQuotes) {
+            if (c === '"' && next === '"') { // escaped quote
+              field += '"';
+              i++;
+            } else if (c === '"') {
+              inQuotes = false;
+            } else {
+              field += c;
+            }
+          } else {
+            if (c === '"') {
+              inQuotes = true;
+            } else if (c === ',') {
+              row.push(field);
+              field = '';
+            } else if (c === '\r') {
+              // ignore
+            } else if (c === '\n') {
+              row.push(field);
+              lines.push(row);
+              row = [];
+              field = '';
+            } else {
+              field += c;
+            }
+          }
+        }
+        // Push last field/row if any
+        if (field.length > 0 || row.length > 0) {
+          row.push(field);
+          lines.push(row);
+        }
+        // Trim whitespace around cells
+        return lines
+          .map(r => r.map(cell => cell.trim()))
+          .filter(r => r.some(cell => cell !== ''));
+      }
+
+      function renderTable(rows) {
+        const host = document.getElementById('tableHost');
+        const table = document.createElement('table');
+
+        if (rows.length) {
+          const thead = document.createElement('thead');
+          const tr = document.createElement('tr');
+          rows[0].forEach(h => {
+            const th = document.createElement('th');
+            th.textContent = h || '';
+            tr.appendChild(th);
+          });
+          thead.appendChild(tr);
+          table.appendChild(thead);
+        }
+
+        const tbody = document.createElement('tbody');
+        for (let i = 1; i < rows.length; i++) {
+          const tr = document.createElement('tr');
+          rows[i].forEach(val => {
+            const td = document.createElement('td');
+            td.textContent = val;
+            tr.appendChild(td);
+          });
+          tbody.appendChild(tr);
+        }
+        table.appendChild(tbody);
+
+        const caption = document.createElement('caption');
+        caption.textContent = 'Contents of data.csv';
+        table.prepend(caption);
+
+        host.innerHTML = '';
+        host.appendChild(table);
+      }
+
+      function escapeHTML(str) {
+        return String(str)
+          .replaceAll('&', '&amp;')
+          .replaceAll('<', '&lt;')
+          .replaceAll('>', '&gt;')
+          .replaceAll('"', '&quot;')
+          .replaceAll("'", '&#39;');
+      }
+    })();
+  </script>
+</body>
+</html>
